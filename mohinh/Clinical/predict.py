@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 import argparse
 import joblib
 import pandas as pd
@@ -38,3 +39,12 @@ def main():
 
 if __name__ == "__main__":
     main()
+=======
+"""THÀNH VIÊN 3 – Clinical
+Hàm dự đoán để Thành viên 4 gọi khi tích hợp vào giao diện."""
+
+def predict(input_dict):
+    # TODO: nhận dict các chỉ số lâm sàng (age, sex, cp, chol...)
+    # TODO: load scaler + model, tiền xử lý, trả về nhãn + xác suất
+    pass
+>>>>>>> origin/main

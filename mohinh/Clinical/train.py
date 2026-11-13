@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 from pathlib import Path
 
 import joblib
@@ -57,10 +58,26 @@ def train(model, X_train, y_train):
             best_name, best_score, best_est = name, gs.best_score_, gs.best_estimator_
     print(f"\n=> Mô hình tốt nhất: {best_name}")
     return best_est, best_name, results
+=======
+"""THÀNH VIÊN 3 – Clinical
+Bước 4-6: xây dựng, huấn luyện, đánh giá, lưu mô hình
+Output: clinical_model.pkl
+"""
+
+# TODO 4: Xây dựng mô hình phân loại nguy cơ/bệnh tim theo nhãn dataset
+def build_model():
+    # TODO: thử Logistic Regression, Random Forest, XGBoost...
+    pass
+
+def train(model, X_train, y_train):
+    # TODO: huấn luyện, cross-validation, tinh chỉnh tham số
+    pass
+>>>>>>> origin/main
 
 
 # TODO 5: Đánh giá mô hình bằng Accuracy, Precision, Recall, F1-score
 def evaluate(model, X_test, y_test):
+<<<<<<< HEAD
     y_pred = model.predict(X_test)
     metrics = {
         "accuracy": accuracy_score(y_test, y_pred),
@@ -98,3 +115,19 @@ if __name__ == "__main__":
     best, best_name, cv_results = train(models, X_train, y_train)
     metrics = evaluate(best, X_test, y_test)
     save_model(best, MODEL_PATH)
+=======
+    # TODO: tính 4 chỉ số trên + confusion matrix
+    pass
+
+
+# TODO 6: Lưu mô hình và viết báo cáo phần Clinical
+def save_model(model, path="mohinh/Clinical/clinical_model.pkl"):
+    # TODO: lưu mô hình
+    # TODO: viết báo cáo phần Clinical
+    pass
+
+
+if __name__ == "__main__":
+    # TODO: load X_clinical.npy, y_clinical.npy -> build -> train -> evaluate -> save
+    pass
+>>>>>>> origin/main

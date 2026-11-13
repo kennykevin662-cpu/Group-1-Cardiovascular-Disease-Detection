@@ -49,4 +49,8 @@ def predict(signal):
         "ten_nhan": "Bat thuong" if label else "Binh thuong",
         "xac_suat_bat_thuong": round(prob_abnormal, 4),
         "xac_suat_binh_thuong": round(1 - prob_abnormal, 4),
+<<<<<<< HEAD
     }
+=======
+    }
+>>>>>>> origin/main
