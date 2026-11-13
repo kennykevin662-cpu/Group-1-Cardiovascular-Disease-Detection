@@ -1,232 +1,255 @@
-""THÀNH VIÊN 2 – PPG | Dataset: BIDMC PPG and Respiration (PhysioNet)
+"""THÀNH VIÊN 2 – PPG | Dataset: BIDMC PPG and Respiration (PhysioNet)
 Bước 1-4: tải dữ liệu, khám phá, tiền xử lý, trích đặc trưng
 Output: X_ppg.npy, y_ppg.npy (lưu trong mohinh/PPG/)
- 
-Tải dataset: https://physionet.org/content/bidmc/1.0.0/
-Giải nén vào dataset/PPG/ (hỗ trợ cả file WFDB: bidmc01.dat/.hea, bidmc01n.dat/.hea
-và file CSV: bidmc_01_Signals.csv, bidmc_01_Numerics.csv).
- 
-Bài toán: HỒI QUY – dự đoán nhịp tim (HR, bpm) cho mỗi cửa sổ tín hiệu PPG.
 """
-import glob
-import os
- 
-import numpy as np
-from scipy import signal as sp
-from scipy.stats import kurtosis, skew
- 
-FS = 125                 # tần số lấy mẫu của BIDMC (Hz)
-WINDOW_SEC = 10          # độ dài cửa sổ (giây)
-STEP_SEC = 5             # bước trượt (giây)
-OUT_DIR = "mohinh/PPG"
- 
-FEATURE_NAMES = [
-    "hr_peaks",        # nhịp tim tính từ khoảng cách đỉnh (bpm)
-    "ibi_mean",        # khoảng peak-to-peak trung bình (s)
-    "ibi_median",
-    "ibi_std",         # ~ SDNN
-    "rmssd",           # HRV: căn bậc hai trung bình bình phương hiệu liên tiếp (s)
-    "pnn50",           # tỉ lệ khoảng liên tiếp lệch > 50 ms
-    "n_peaks",
-    "amp_mean",        # biên độ đỉnh
-    "amp_std",
-    "sig_skew",
-    "sig_kurt",
-    "dom_freq_bpm",    # tần số trội trong dải 0.5-3.5 Hz đổi ra bpm
-    "spec_entropy",    # entropy phổ
-    "pulse_width",     # độ rộng trung bình giữa 2 đáy kề nhau (s)
-]
- 
- 
+
 # TODO 1: Tìm hiểu và tải dataset BIDMC PPG and Respiration (đặt vào dataset/PPG/)
-def _norm(names):
-    return [n.strip().strip(",").strip().upper() for n in names]
- 
- 
 def load_dataset(path="dataset/PPG"):
-    """Trả về list dict: {id, ppg, fs, hr, resp, spo2, fs_num}.
-    hr/resp/spo2 là số liệu 1 Hz (numerics)."""
-    records = []
- 
-    # --- Cách 1: WFDB ---
-    hea_files = sorted(glob.glob(os.path.join(path, "**", "bidmc[0-9][0-9].hea"), recursive=True))
-    if hea_files:
-        import wfdb
-        for h in hea_files:
-            base = h[:-4]
-            rec = wfdb.rdrecord(base)
-            names = _norm(rec.sig_name)
-            ppg = rec.p_signal[:, names.index("PLETH")]
-            item = {"id": os.path.basename(base), "ppg": ppg, "fs": int(rec.fs),
-                    "hr": None, "resp": None, "spo2": None, "fs_num": 1}
-            if os.path.exists(base + "n.hea"):
-                num = wfdb.rdrecord(base + "n")
-                nn = _norm(num.sig_name)
-                item["fs_num"] = num.fs
-                for key, col in (("hr", "HR"), ("resp", "RESP"), ("spo2", "SPO2")):
-                    if col in nn:
-                        item[key] = num.p_signal[:, nn.index(col)]
-            records.append(item)
-        return records
- 
-    # --- Cách 2: CSV ---
+    # Đọc các cặp file BIDMC dạng *_Signals.csv và *_Numerics.csv.
+    import os
+    import glob
     import pandas as pd
-    sig_files = sorted(glob.glob(os.path.join(path, "**", "bidmc_[0-9][0-9]_Signals.csv"), recursive=True))
-    for f in sig_files:
-        df = pd.read_csv(f)
-        df.columns = [c.strip().upper() for c in df.columns]
-        t = df["TIME [S]"].values
-        fs = int(round(1.0 / np.median(np.diff(t))))
-        item = {"id": os.path.basename(f).replace("_Signals.csv", ""),
-                "ppg": df["PLETH"].values.astype(float), "fs": fs,
-                "hr": None, "resp": None, "spo2": None, "fs_num": 1}
-        nf = f.replace("_Signals.csv", "_Numerics.csv")
-        if os.path.exists(nf):
-            dn = pd.read_csv(nf)
-            dn.columns = [c.strip().upper() for c in dn.columns]
-            for key, col in (("hr", "HR"), ("resp", "RESP"), ("spo2", "SPO2")):
-                if col in dn.columns:
-                    item[key] = dn[col].values.astype(float)
-        records.append(item)
- 
-    if not records:
+
+    if not os.path.isdir(path):
         raise FileNotFoundError(
-            f"Không tìm thấy dữ liệu BIDMC trong '{path}'. Hãy tải dataset từ PhysioNet vào thư mục này.")
-    return records
- 
- 
-# TODO 2: Khám phá và trực quan hóa tín hiệu PPG
-def explore_data(data, out_dir=OUT_DIR):
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
- 
-    os.makedirs(os.path.join(out_dir, "figures"), exist_ok=True)
- 
-    # Thống kê chung
-    lengths = [len(r["ppg"]) / r["fs"] for r in data]
-    fs_set = sorted({r["fs"] for r in data})
-    print(f"Số bản ghi: {len(data)}")
-    print(f"Tần số lấy mẫu: {fs_set} Hz")
-    print(f"Độ dài (s): min={min(lengths):.0f}, max={max(lengths):.0f}, TB={np.mean(lengths):.0f}")
-    all_hr = np.concatenate([r["hr"][~np.isnan(r["hr"])] for r in data if r["hr"] is not None])
-    print(f"Nhãn HR (bpm): min={all_hr.min():.0f}, max={all_hr.max():.0f}, "
-          f"TB={all_hr.mean():.1f}, std={all_hr.std():.1f}")
- 
-    r = data[0]
-    fs = r["fs"]
-    seg = r["ppg"][: 10 * fs]
-    t = np.arange(len(seg)) / fs
- 
-    fig, ax = plt.subplots(1, 3, figsize=(16, 4))
-    ax[0].plot(t, seg)
-    ax[0].set_title(f"PPG thô – {r['id']} (10 s đầu)")
-    ax[0].set_xlabel("Thời gian (s)")
- 
-    f, pxx = sp.welch(r["ppg"] - np.mean(r["ppg"]), fs, nperseg=8 * fs)
-    ax[1].semilogy(f, pxx)
-    ax[1].set_xlim(0, 10)
-    ax[1].set_title("Phổ công suất (Welch)")
-    ax[1].set_xlabel("Tần số (Hz)")
- 
-    ax[2].hist(all_hr, bins=40)
-    ax[2].set_title("Phân bố nhãn HR")
-    ax[2].set_xlabel("bpm")
- 
-    plt.tight_layout()
-    path = os.path.join(out_dir, "figures", "explore_ppg.png")
-    plt.savefig(path, dpi=120)
-    plt.close()
-    print("Đã lưu hình:", path)
- 
- 
-# TODO 3: Tiền xử lý tín hiệu, lọc nhiễu
-def preprocess_signal(signal, fs=FS):
-    """Lọc bandpass 0.5-8 Hz, hạn chế nhiễu chuyển động (cắt biên độ bất thường), chuẩn hóa z-score."""
-    x = np.asarray(signal, dtype=float)
-    x = np.nan_to_num(x, nan=np.nanmedian(x) if np.any(~np.isnan(x)) else 0.0)
- 
-    sos = sp.butter(4, [0.5, 8.0], btype="bandpass", fs=fs, output="sos")
-    x = sp.sosfiltfilt(sos, x)
- 
-    # Nhiễu chuyển động: cắt các đoạn có biên độ lớn bất thường (theo MAD)
-    med = np.median(x)
-    mad = np.median(np.abs(x - med)) * 1.4826 + 1e-8
-    x = np.clip(x, med - 6 * mad, med + 6 * mad)
- 
-    return (x - np.mean(x)) / (np.std(x) + 1e-8)
- 
- 
-# TODO 4: Trích xuất đặc trưng như nhịp mạch, khoảng cách giữa các đỉnh
-def extract_features(signal, fs=FS):
-    """Trả về vector đặc trưng (theo FEATURE_NAMES) hoặc None nếu không đủ đỉnh."""
-    x = np.asarray(signal, dtype=float)
-    x = (x - np.mean(x)) / (np.std(x) + 1e-8)
- 
-    peaks, _ = sp.find_peaks(x, distance=int(0.3 * fs), prominence=0.3)
-    if len(peaks) < 3:
-        return None
- 
-    ibi = np.diff(peaks) / fs
-    hr_peaks = 60.0 / np.mean(ibi)
-    diff_ibi = np.diff(ibi)
-    rmssd = np.sqrt(np.mean(diff_ibi ** 2)) if len(diff_ibi) else 0.0
-    pnn50 = np.mean(np.abs(diff_ibi) > 0.05) if len(diff_ibi) else 0.0
- 
-    amps = x[peaks]
- 
-    # độ rộng xung: khoảng cách giữa 2 đáy kề nhau
-    valleys, _ = sp.find_peaks(-x, distance=int(0.3 * fs), prominence=0.3)
-    pulse_width = np.mean(np.diff(valleys)) / fs if len(valleys) >= 2 else np.mean(ibi)
- 
-    # phổ
-    f, pxx = sp.welch(x, fs, nperseg=min(len(x), 8 * fs))
-    band = (f >= 0.5) & (f <= 3.5)
-    fb, pb = f[band], pxx[band]
-    dom_bpm = fb[np.argmax(pb)] * 60.0
-    p_norm = pb / (pb.sum() + 1e-12)
-    spec_entropy = -np.sum(p_norm * np.log(p_norm + 1e-12)) / np.log(len(p_norm))
- 
-    return np.array([
-        hr_peaks, np.mean(ibi), np.median(ibi), np.std(ibi), rmssd, pnn50, len(peaks),
-        np.mean(amps), np.std(amps), skew(x), kurtosis(x), dom_bpm, spec_entropy, pulse_width,
-    ], dtype=float)
- 
- 
-def build_dataset(path="dataset/PPG", out_dir=OUT_DIR):
-    data = load_dataset(path)
-    explore_data(data, out_dir)
- 
-    X, y, groups = [], [], []
-    win, step = WINDOW_SEC, STEP_SEC
-    for gi, r in enumerate(data):
-        if r["hr"] is None:
+            f"Không tìm thấy thư mục dữ liệu: {path}. "
+            "Hãy đặt các file BIDMC vào thư mục này."
+        )
+
+    signal_files = sorted(glob.glob(os.path.join(path, "*Signals.csv")))
+    if not signal_files:
+        raise FileNotFoundError(
+            f"Không tìm thấy file *Signals.csv trong {path}. "
+            "Hàm này đang đọc dữ liệu BIDMC dạng CSV, chưa đọc trực tiếp WFDB."
+        )
+
+    records = []
+    for signal_file in signal_files:
+        base = signal_file[:-len("Signals.csv")]
+        numerics_file = base + "Numerics.csv"
+        if not os.path.isfile(numerics_file):
+            print(f"Bỏ qua {signal_file}: thiếu file Numerics.csv tương ứng.")
             continue
-        fs = r["fs"]
-        sig = preprocess_signal(r["ppg"], fs)
-        n_sec = len(sig) // fs
-        for start in range(0, n_sec - win + 1, step):
-            seg = sig[start * fs:(start + win) * fs]
-            hr_win = r["hr"][start:start + win]
-            label = np.nanmean(hr_win) if np.any(~np.isnan(hr_win)) else np.nan
-            if np.isnan(label) or label <= 0:
+
+        signals = pd.read_csv(signal_file)
+        numerics = pd.read_csv(numerics_file)
+
+        ppg_candidates = [
+            col for col in signals.columns
+            if any(key in str(col).lower() for key in ("pleth", "ppg"))
+        ]
+        if not ppg_candidates:
+            print(f"Bỏ qua {signal_file}: không tìm thấy cột PLETH/PPG.")
+            continue
+
+        hr_candidates = [
+            col for col in numerics.columns
+            if any(key in str(col).lower() for key in ("pulse", "hr", "heart rate"))
+        ]
+        if not hr_candidates:
+            print(f"Bỏ qua {numerics_file}: không tìm thấy cột HR/PULSE.")
+            continue
+
+        ppg_col = ppg_candidates[0]
+        hr_col = hr_candidates[0]
+        records.append({
+            "record_id": os.path.basename(base.rstrip("_")),
+            "signals": signals,
+            "numerics": numerics,
+            "ppg": pd.to_numeric(signals[ppg_col], errors="coerce").to_numpy(),
+            "hr": pd.to_numeric(numerics[hr_col], errors="coerce").to_numpy(),
+            "ppg_column": ppg_col,
+            "hr_column": hr_col,
+        })
+
+    if not records:
+        raise ValueError("Không đọc được bản ghi BIDMC hợp lệ từ các file CSV.")
+    return records
+
+
+# TODO 2: Khám phá và trực quan hóa tín hiệu PPG
+def explore_data(data):
+    # Vẽ tín hiệu PPG, phổ tần số và thống kê dữ liệu.
+    import os
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from scipy.signal import periodogram
+
+    os.makedirs("outputs", exist_ok=True)
+    print(f"Số bản ghi: {len(data)}")
+
+    for index, record in enumerate(data):
+        signal = np.asarray(record["ppg"], dtype=float)
+        signal = signal[np.isfinite(signal)]
+        if signal.size == 0:
+            continue
+
+        fs = 125.0
+        time = np.arange(signal.size) / fs
+        frequencies, power = periodogram(signal, fs=fs)
+
+        fig, axes = plt.subplots(2, 1, figsize=(12, 7))
+        axes[0].plot(time, signal, linewidth=0.8)
+        axes[0].set_title(f"PPG waveform - {record['record_id']}")
+        axes[0].set_xlabel("Thời gian (giây)")
+        axes[0].set_ylabel("Biên độ")
+        axes[0].grid(True, alpha=0.3)
+
+        axes[1].plot(frequencies, power, linewidth=0.8)
+        axes[1].set_xlim(0, 10)
+        axes[1].set_title("Phổ tần số PPG")
+        axes[1].set_xlabel("Tần số (Hz)")
+        axes[1].set_ylabel("Công suất")
+        axes[1].grid(True, alpha=0.3)
+
+        fig.tight_layout()
+        fig.savefig(f"outputs/ppg_explore_{index + 1}.png", dpi=150)
+        plt.close(fig)
+
+        hr = np.asarray(record["hr"], dtype=float)
+        hr = hr[np.isfinite(hr)]
+        print(
+            f"{record['record_id']}: {signal.size} mẫu PPG; "
+            f"HR hợp lệ: {hr.size}; "
+            f"HR trung bình: {np.mean(hr):.2f} BPM" if hr.size else
+            f"{record['record_id']}: {signal.size} mẫu PPG; không có HR hợp lệ."
+        )
+
+
+# TODO 3: Tiền xử lý tín hiệu, lọc nhiễu
+def preprocess_signal(signal, fs=125):
+    # Lọc thông dải 0.5–8 Hz và chuẩn hóa Z-score.
+    import numpy as np
+    from scipy.signal import butter, sosfiltfilt
+
+    x = np.asarray(signal, dtype=float).reshape(-1)
+    x = np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
+    if x.size < 16:
+        raise ValueError("Tín hiệu PPG quá ngắn để tiền xử lý.")
+    if fs <= 16:
+        raise ValueError("Tần số lấy mẫu phải lớn hơn 16 Hz để lọc đến 8 Hz.")
+
+    sos = butter(3, [0.5, 8.0], btype="bandpass", fs=fs, output="sos")
+    try:
+        filtered = sosfiltfilt(sos, x)
+    except ValueError:
+        # Với đoạn tín hiệu ngắn, dùng lọc tiến để tránh lỗi độ dài padding.
+        from scipy.signal import sosfilt
+        filtered = sosfilt(sos, x)
+
+    mean = np.mean(filtered)
+    std = np.std(filtered)
+    if std < 1e-8:
+        return np.zeros_like(filtered)
+    return (filtered - mean) / std
+
+
+# TODO 4: Trích xuất đặc trưng như nhịp mạch, khoảng cách giữa các đỉnh
+def extract_features(signal, fs=125):
+    # Trích xuất đặc trưng thống kê, đỉnh mạch, nhịp tim và HRV.
+    import numpy as np
+    from scipy.signal import find_peaks
+    from scipy.stats import skew, kurtosis
+
+    x = np.asarray(signal, dtype=float).reshape(-1)
+    x = x[np.isfinite(x)]
+    if x.size == 0:
+        raise ValueError("Tín hiệu rỗng, không thể trích xuất đặc trưng.")
+
+    peaks, _ = find_peaks(
+        x,
+        distance=max(1, int(0.30 * fs)),
+        prominence=max(0.1 * np.std(x), 1e-6)
+    )
+    intervals = np.diff(peaks) / float(fs)
+    valid_intervals = intervals[
+        (intervals >= 60.0 / 220.0) & (intervals <= 60.0 / 30.0)
+    ]
+
+    estimated_hr = (
+        60.0 / np.median(valid_intervals)
+        if valid_intervals.size else 0.0
+    )
+    peak_amplitudes = x[peaks] if peaks.size else np.array([], dtype=float)
+    interval_rmssd = (
+        np.sqrt(np.mean(np.diff(valid_intervals) ** 2))
+        if valid_intervals.size >= 2 else 0.0
+    )
+
+    features = [
+        np.mean(x), np.std(x), np.median(x), np.min(x), np.max(x),
+        np.ptp(x), np.sqrt(np.mean(x ** 2)),
+        skew(x) if x.size > 2 and np.std(x) > 0 else 0.0,
+        kurtosis(x) if x.size > 3 and np.std(x) > 0 else 0.0,
+        peaks.size,
+        np.mean(valid_intervals) if valid_intervals.size else 0.0,
+        np.std(valid_intervals) if valid_intervals.size else 0.0,
+        np.mean(peak_amplitudes) if peak_amplitudes.size else 0.0,
+        estimated_hr,
+        interval_rmssd,
+        np.ptp(peak_amplitudes) if peak_amplitudes.size else 0.0,
+    ]
+    return np.nan_to_num(np.asarray(features, dtype=float))
+
+
+def build_dataset():
+    # Đọc dữ liệu, khám phá, chia thành cửa sổ và lưu X, y.
+    import os
+    import numpy as np
+
+    records = load_dataset()
+    explore_data(records)
+
+    fs = 125
+    window_seconds = 8
+    overlap = 0.5
+    window_size = int(window_seconds * fs)
+    step = int(window_size * (1 - overlap))
+
+    X, y, groups = [], [], []
+    for record in records:
+        ppg = np.asarray(record["ppg"], dtype=float)
+        hr = np.asarray(record["hr"], dtype=float)
+
+        # BIDMC Numerics thường lấy mẫu chậm hơn PPG; ánh xạ HR lên trục thời gian.
+        if hr.size == 0 or ppg.size < window_size:
+            continue
+        ppg_duration = ppg.size / fs
+        hr_time = np.linspace(0, ppg_duration, num=hr.size, endpoint=False)
+        ppg_time = np.arange(ppg.size) / fs
+
+        for start in range(0, ppg.size - window_size + 1, step):
+            end = start + window_size
+            segment = ppg[start:end]
+            start_time = start / fs
+            end_time = end / fs
+            mask = (hr_time >= start_time) & (hr_time < end_time)
+            hr_values = hr[mask]
+            hr_values = hr_values[
+                np.isfinite(hr_values) & (hr_values >= 30) & (hr_values <= 220)
+            ]
+            if hr_values.size == 0 or not np.all(np.isfinite(segment)):
                 continue
-            feats = extract_features(seg, fs)
-            if feats is None:
-                continue
-            X.append(feats)
-            y.append(label)
-            groups.append(gi)
- 
-    X = np.array(X)
-    y = np.array(y)
-    groups = np.array(groups)
-    os.makedirs(out_dir, exist_ok=True)
-    np.save(os.path.join(out_dir, "X_ppg.npy"), X)
-    np.save(os.path.join(out_dir, "y_ppg.npy"), y)
-    np.save(os.path.join(out_dir, "groups_ppg.npy"), groups)  # mã bản ghi, để chia train/test theo bệnh nhân
-    print(f"Đã lưu X_ppg.npy {X.shape}, y_ppg.npy {y.shape} vào {out_dir}/")
- 
- 
+
+            clean = preprocess_signal(segment, fs=fs)
+            X.append(extract_features(clean, fs=fs))
+            y.append(float(np.median(hr_values)))
+            groups.append(record["record_id"])
+
+    if not X:
+        raise ValueError(
+            "Không tạo được mẫu dữ liệu. Hãy kiểm tra định dạng CSV, "
+            "cột PPG/HR và độ dài bản ghi."
+        )
+
+    output_dir = "mohinh/PPG"
+    os.makedirs(output_dir, exist_ok=True)
+    np.save(os.path.join(output_dir, "X_ppg.npy"), np.vstack(X))
+    np.save(os.path.join(output_dir, "y_ppg.npy"), np.asarray(y, dtype=float))
+    np.save(os.path.join(output_dir, "groups_ppg.npy"), np.asarray(groups))
+    print(f"Đã lưu X_ppg.npy: {len(X)} mẫu, {len(X[0])} đặc trưng.")
+    print(f"Đã lưu y_ppg.npy: {len(y)} nhãn BPM.")
+
+
 if __name__ == "__main__":
     build_dataset()
