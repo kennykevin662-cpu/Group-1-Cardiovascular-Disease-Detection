@@ -1,7 +1,16 @@
-<<<<<<< HEAD
+"""Clinical - dự đoán bệnh tim bằng clinical_model.pkl.
+
+Ví dụ:
+  python mohinh/Clinical/predict.py                 # demo 5 dòng đầu dataset
+  python mohinh/Clinical/predict.py --csv patients.csv
+  python mohinh/Clinical/predict.py --age 63 --sex 1 --cp 1 --trestbps 145 --chol 233 \
+      --fbs 1 --restecg 2 --thalach 150 --exang 0 --oldpeak 2.3 --slope 3 --ca 0 --thal 6
+"""
 import argparse
+
 import joblib
 import pandas as pd
+
 from preprocess import FEATURES, SCALER_PATH, load_dataset
 from train import MODEL_PATH
 
@@ -39,12 +48,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-=======
-"""THÀNH VIÊN 3 – Clinical
-Hàm dự đoán để Thành viên 4 gọi khi tích hợp vào giao diện."""
-
-def predict(input_dict):
-    # TODO: nhận dict các chỉ số lâm sàng (age, sex, cp, chol...)
-    # TODO: load scaler + model, tiền xử lý, trả về nhãn + xác suất
-    pass
->>>>>>> origin/main
