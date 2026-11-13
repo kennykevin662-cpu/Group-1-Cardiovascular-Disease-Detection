@@ -44,9 +44,6 @@ def train(model, X_train, y_train, X_val, y_val):
     print(f"[TRAIN] Accuracy train: {train_acc:.4f} | Accuracy val: {val_acc:.4f}")
     return model
 
-def train(model, X_train, y_train, X_val, y_val):
-    # TODO: huấn luyện, theo dõi loss/accuracy
-    pass
 
 # TODO 5: Đánh giá mô hình bằng Accuracy, Precision, Recall, F1-score
 def evaluate(model, X_test, y_test):
